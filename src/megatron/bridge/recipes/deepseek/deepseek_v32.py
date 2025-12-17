@@ -143,7 +143,7 @@ def deepseek_v32_pretrain_config(**user_kwargs: Unpack[DeepSeekV32CommonKwargs])
 
     Note:
         - RoPE fusion is disabled as it's incompatible with DSA
-        - Context parallelism may have limited support with DSA (check upstream PR #2154)
+        - Context parallelism is not supported with DSA (requires context_parallel_size=1)
 
     See `_deepseek_v32_common` for the full list of parameters.
     """
@@ -262,14 +262,14 @@ def _deepseek_v32_common(
 
     Note:
         - RoPE fusion is disabled (incompatible with DSA)
-        - Context parallelism support with DSA depends on upstream Megatron-Core PR #2154
+        - Context parallelism is not supported with DSA (requires context_parallel_size=1)
     """
-    # Warn about context parallelism with DSA (may have limited support)
+    # DSA requires context_parallel_size=1 per Megatron-Core PR #2154
     if context_parallel_size > 1:
-        logger.warning(
-            f"Context parallelism (context_parallel_size={context_parallel_size}) with DSA "
-            "may have limited support. Check Megatron-Core PR #2154 for compatibility. "
-            "For 128k+ sequence training, this is needed to distribute sequence across ranks."
+        raise ValueError(
+            f"DSA (DeepSeek Sparse Attention) requires context_parallel_size=1, "
+            f"but got context_parallel_size={context_parallel_size}. "
+            "See Megatron-Core PR #2154: https://github.com/NVIDIA/Megatron-LM/pull/2154"
         )
 
     base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
