@@ -78,13 +78,20 @@ def _get_dsa_layer_spec(config: "GPTModelProvider", vp_stage: int = None) -> "Mo
     """
     Get the layer spec for DSA (DeepSeek Sparse Attention) models.
 
-    Falls back to standard decoder block spec if DSA spec is not available.
+    Raises:
+        ImportError: If DSA module spec is not available (requires Megatron-Core PR #2154).
     """
-    if HAS_DSA_SPEC and config.experimental_attention_variant == "dsa":
+    if config.experimental_attention_variant == "dsa":
+        if not HAS_DSA_SPEC:
+            raise ImportError(
+                "DeepSeek V3.2 requires DSA (DeepSeek Sparse Attention) support from Megatron-Core. "
+                "Please install Megatron-Core with PR #2154 merged. "
+                "See: https://github.com/NVIDIA/Megatron-LM/pull/2154"
+            )
         # Use DSA-specific module spec from PR #2154
         return get_dsa_module_spec_for_backend(config, use_transformer_engine=HAVE_TE)
     else:
-        # Fall back to standard decoder block spec
+        # Fall back to standard decoder block spec for non-DSA models
         return get_gpt_decoder_block_spec(config, use_transformer_engine=HAVE_TE)
 
 # FP8 block size used in DeepSeek V3.2 quantization

@@ -22,6 +22,7 @@ Requires Megatron-Core with PR #2154 for DSA support.
 See: https://github.com/NVIDIA/Megatron-LM/pull/2154
 """
 
+import logging
 import os
 from typing import List, Optional, Union
 
@@ -46,6 +47,9 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 def set_deepseek_v32_pipeline_model_parallel_layout(
@@ -138,8 +142,8 @@ def deepseek_v32_pretrain_config(**user_kwargs: Unpack[DeepSeekV32CommonKwargs])
     V3.2 adds DSA (DeepSeek Sparse Attention) for O(L*K) attention complexity.
 
     Note:
-        - Context parallelism is not supported with DSA
         - RoPE fusion is disabled as it's incompatible with DSA
+        - Context parallelism may have limited support with DSA (check upstream PR #2154)
 
     See `_deepseek_v32_common` for the full list of parameters.
     """
@@ -149,10 +153,11 @@ def deepseek_v32_pretrain_config(**user_kwargs: Unpack[DeepSeekV32CommonKwargs])
         "pipeline_model_parallel_size": 16,
         "expert_model_parallel_size": 64,
         "pipeline_dtype": torch.bfloat16,
-        # Context parallelism not supported with DSA
-        "context_parallel_size": 1,
         # Recompute settings
         "recompute_granularity": "selective",
+        # grad_reduce_in_fp32=False: Reduce gradients in BF16 for better communication bandwidth.
+        # This is safe with precision-aware optimizer (main_params_dtype=fp32).
+        # V3/V3.2 use this setting; V2 uses grad_reduce_in_fp32=True.
         "precision_config": MixedPrecisionConfig(
             bf16=True,
             params_dtype=torch.bfloat16,
@@ -177,9 +182,8 @@ def deepseek_v32_pretrain_config_32nodes(**user_kwargs: Unpack[DeepSeekV32Common
         "tensor_model_parallel_size": 2,
         "pipeline_model_parallel_size": 8,
         "expert_model_parallel_size": 32,
-        # Context parallelism not supported with DSA
-        "context_parallel_size": 1,
-        # Maintain old recipe defaults via wrapper overrides
+        # grad_reduce_in_fp32=False: Reduce gradients in BF16 for better communication bandwidth.
+        # This is safe with precision-aware optimizer (main_params_dtype=fp32).
         "precision_config": MixedPrecisionConfig(
             bf16=True,
             params_dtype=torch.bfloat16,
@@ -256,16 +260,16 @@ def _deepseek_v32_common(
         - DSA (DeepSeek Sparse Attention) for O(L*K) attention complexity
         - FP8 dequantization support for official quantized checkpoints
 
-    Limitations:
-        - Context parallelism is NOT supported with DSA
+    Note:
         - RoPE fusion is disabled (incompatible with DSA)
+        - Context parallelism support with DSA depends on upstream Megatron-Core PR #2154
     """
-    # Validate DSA constraints
+    # Warn about context parallelism with DSA (may have limited support)
     if context_parallel_size > 1:
-        raise ValueError(
-            f"Context parallelism (context_parallel_size={context_parallel_size}) "
-            "is not supported with DSA (DeepSeek Sparse Attention). "
-            "Please set context_parallel_size=1."
+        logger.warning(
+            f"Context parallelism (context_parallel_size={context_parallel_size}) with DSA "
+            "may have limited support. Check Megatron-Core PR #2154 for compatibility. "
+            "For 128k+ sequence training, this is needed to distribute sequence across ranks."
         )
 
     base_output_dir = dir if dir is not None else os.path.join(os.getcwd(), "nemo_experiments")
@@ -374,7 +378,9 @@ def _deepseek_v32_common(
         scheduler=scheduler,
         ddp=DistributedDataParallelConfig(
             check_for_nan_in_grad=check_for_nan_in_grad,
-            grad_reduce_in_fp32=False,  # V3/V3.2 recipe sets this to False
+            # grad_reduce_in_fp32=False: BF16 gradient reduction for better bandwidth.
+            # Safe with precision-aware optimizer that keeps master params in FP32.
+            grad_reduce_in_fp32=False,
             overlap_grad_reduce=True,
             overlap_param_gather=True,
             average_in_collective=True,
