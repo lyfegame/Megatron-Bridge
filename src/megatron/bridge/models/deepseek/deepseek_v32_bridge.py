@@ -34,9 +34,10 @@ Upstream Support:
 
 import logging
 from dataclasses import dataclass
-from typing import Mapping, Optional
+from typing import TYPE_CHECKING, Callable, Mapping, Optional, Union
 
 import torch
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -44,10 +45,47 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, ReplicatedMapping
 from megatron.bridge.models.deepseek.common import get_common_configs, get_common_mapping_list
 from megatron.bridge.models.deepseek.deepseek_provider import DeepSeekV3ModelProvider
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
+if TYPE_CHECKING:
+    from megatron.core.transformer import ModuleSpec
+
 logger = logging.getLogger(__name__)
+
+# Check if DSA module spec is available (requires Megatron-Core PR #2154)
+try:
+    from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+        get_dsa_module_spec_for_backend,
+    )
+
+    HAS_DSA_SPEC = True
+except ImportError:
+    HAS_DSA_SPEC = False
+    get_dsa_module_spec_for_backend = None
+
+# Check for Transformer Engine
+try:
+    import transformer_engine  # type: ignore  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
+def _get_dsa_layer_spec(config: "GPTModelProvider", vp_stage: int = None) -> "ModuleSpec":
+    """
+    Get the layer spec for DSA (DeepSeek Sparse Attention) models.
+
+    Falls back to standard decoder block spec if DSA spec is not available.
+    """
+    if HAS_DSA_SPEC and config.experimental_attention_variant == "dsa":
+        # Use DSA-specific module spec from PR #2154
+        return get_dsa_module_spec_for_backend(config, use_transformer_engine=HAVE_TE)
+    else:
+        # Fall back to standard decoder block spec
+        return get_gpt_decoder_block_spec(config, use_transformer_engine=HAVE_TE)
 
 # FP8 block size used in DeepSeek V3.2 quantization
 FP8_BLOCK_SIZE = 128
@@ -142,6 +180,9 @@ class DeepSeekV32ModelProvider(DeepSeekV3ModelProvider):
 
     Upstream: Requires Megatron-Core with PR #2154 for DSA support.
     """
+
+    # Use DSA-aware layer spec that conditionally uses get_dsa_module_spec_for_backend
+    transformer_layer_spec: Union["ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]] = _get_dsa_layer_spec
 
     # DSA (DeepSeek Sparse Attention) config - maps to Megatron-Core PR #2154 params
     experimental_attention_variant: Optional[str] = "dsa"
