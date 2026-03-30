@@ -106,6 +106,7 @@ from megatron.bridge.models.llama_nemotron import (
     LlamaNemotronHeterogeneousProvider,
 )
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.minimax_m2 import MiniMaxM2Bridge
 from megatron.bridge.models.ministral3 import (
     Ministral3Bridge,
     Ministral3Model,
