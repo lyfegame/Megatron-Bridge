@@ -258,6 +258,7 @@ __all__ = [
     "MistralSmall3ModelProvider24B",
     # Ministral 3 Models
     "Ministral3Bridge",
+    "MiniMaxM2Bridge",
     "Ministral3Model",
     "Ministral3ModelProvider",
     "Ministral3ModelProvider3B",
