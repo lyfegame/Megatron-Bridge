@@ -24,7 +24,7 @@ from megatron.bridge.utils.common_utils import get_rank_safe
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def _is_deepep_supported_device(device_properties: torch.cuda.DeviceProperties) -> bool:
+def _is_deepep_supported_device(device_properties) -> bool:
     name = getattr(device_properties, "name", "") or ""
     major = getattr(device_properties, "major", -1)
     if major in [8, 9, 10]:
@@ -32,7 +32,7 @@ def _is_deepep_supported_device(device_properties: torch.cuda.DeviceProperties) 
     return name.startswith("NVIDIA B200") or name.startswith("NVIDIA B300")
 
 
-def _is_hybridep_supported_device(device_properties: torch.cuda.DeviceProperties) -> bool:
+def _is_hybridep_supported_device(device_properties) -> bool:
     name = getattr(device_properties, "name", "") or ""
     major = getattr(device_properties, "major", -1)
     if major in [8, 9, 10]:
