@@ -24,6 +24,22 @@ from megatron.bridge.utils.common_utils import get_rank_safe
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+def _is_deepep_supported_device(device_properties: torch.cuda.DeviceProperties) -> bool:
+    name = getattr(device_properties, "name", "") or ""
+    major = getattr(device_properties, "major", -1)
+    if major in [8, 9, 10]:
+        return True
+    return name.startswith("NVIDIA B200") or name.startswith("NVIDIA B300")
+
+
+def _is_hybridep_supported_device(device_properties: torch.cuda.DeviceProperties) -> bool:
+    name = getattr(device_properties, "name", "") or ""
+    major = getattr(device_properties, "major", -1)
+    if major in [8, 9, 10]:
+        return True
+    return name.startswith("NVIDIA GB200") or name.startswith("NVIDIA GB300")
+
+
 def apply_flex_dispatcher_backend(
     model_config: TransformerConfig,
     moe_flex_dispatcher_backend: str | None = None,
@@ -45,7 +61,7 @@ def apply_flex_dispatcher_backend(
 
     device_properties = torch.cuda.get_device_properties(0)
     if moe_flex_dispatcher_backend == "deepep":
-        if not (device_properties.major in [8, 9] or device_properties.name in ["NVIDIA B200", "NVIDIA B300"]):
+        if not _is_deepep_supported_device(device_properties):
             if get_rank_safe() == 0:
                 logger.warning(
                     "DeepEP is only applicable to Ampere, Hopper, and Blackwell (only B200 and B300) GPUs. Skipping DeepEP configuration."
@@ -74,7 +90,7 @@ def validate_flex_dispatcher_backend(model_config: TransformerConfig) -> None:
     if model_config.moe_token_dispatcher_type == "flex":
         device_properties = torch.cuda.get_device_properties(0)
         if model_config.moe_flex_dispatcher_backend == "deepep":
-            if not (device_properties.major in (8, 9) or device_properties.name in ["NVIDIA B200", "NVIDIA B300"]):
+            if not _is_deepep_supported_device(device_properties):
                 raise ValueError("DeepEP is supported for Ampere, Hopper, and Blackwell (only B200 and B300) GPUs")
 
         if model_config.moe_flex_dispatcher_backend == "hybridep":
