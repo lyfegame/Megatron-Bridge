@@ -347,6 +347,55 @@ userbuffers_fp8_b200_h18432_tp8_mbs1_seqlen4096 = TransformerLayerTPOverlapCfg(
 )
 
 
+def _has_real_shared_experts(model_cfg: GPTModelProvider | T5ModelProvider) -> bool:
+    shared_size = getattr(model_cfg, "moe_shared_expert_intermediate_size", None)
+    return shared_size is not None and shared_size > 0
+
+
+def _get_safe_long_context_tp_overlap_cfg(
+    model_cfg: GPTModelProvider | T5ModelProvider,
+) -> Optional[TransformerLayerTPOverlapCfg]:
+    hidden_size = getattr(model_cfg, "hidden_size", None)
+    tensor_parallel_size = getattr(model_cfg, "tensor_model_parallel_size", 1)
+    context_parallel_size = max(1, getattr(model_cfg, "context_parallel_size", 1) or 1)
+    seq_length = getattr(model_cfg, "seq_length", None)
+    uses_low_precision = bool(getattr(model_cfg, "bf16", False) or getattr(model_cfg, "fp16", False))
+
+    if hidden_size is None or seq_length is None or not uses_low_precision or tensor_parallel_size < 2:
+        return None
+
+    local_tokens = seq_length // context_parallel_size
+    if hidden_size > 4096 or local_tokens >= 65536:
+        return None
+
+    qkv_dgrad_sms = 2 if tensor_parallel_size >= 8 else 4 if tensor_parallel_size >= 4 else 8
+    qkv_wgrad_sms = 24 if tensor_parallel_size >= 4 else 16
+    fc1_dgrad_sms = 2 if tensor_parallel_size >= 4 else 4
+    fc1_wgrad_sms = 2 if tensor_parallel_size >= 8 else 4 if tensor_parallel_size >= 4 else 8
+
+    logging.warning(
+        "Tensor parallel overlap: using conservative long-context TP overlap config "
+        "for hidden_size=%s tp=%s cp=%s local_tokens=%s.",
+        hidden_size,
+        tensor_parallel_size,
+        context_parallel_size,
+        local_tokens,
+    )
+
+    return TransformerLayerTPOverlapCfg(
+        qkv_dgrad=BulkOverlapCfg(num_sm=qkv_dgrad_sms, cga_size=2, set_sm_margin=False),
+        qkv_wgrad=BulkOverlapCfg(num_sm=qkv_wgrad_sms, cga_size=2, set_sm_margin=False),
+        fc1_dgrad=BulkOverlapCfg(num_sm=fc1_dgrad_sms, cga_size=2, set_sm_margin=False),
+        fc1_wgrad=BulkOverlapCfg(num_sm=fc1_wgrad_sms, cga_size=2, set_sm_margin=False),
+        qkv_fprop=RingExchangeOverlapCfg(aggregate=False),
+        proj_dgrad=RingExchangeOverlapCfg(aggregate=False),
+        fc1_fprop=RingExchangeOverlapCfg(aggregate=False),
+        fc2_dgrad=RingExchangeOverlapCfg(aggregate=False),
+        proj_fprop=RingExchangeOverlapCfg(num_sm=1, set_sm_margin=True),
+        fc2_fprop=RingExchangeOverlapCfg(num_sm=1, set_sm_margin=True),
+    )
+
+
 @dataclass
 class _CommOverlapConfig:
     # Tensor parallel communication overlap (experimental)
@@ -446,6 +495,8 @@ class CommOverlapConfig:
             elif not HAVE_TE:
                 logging.warning("Disabling tensor parallel communication overlap due to TE not detected.")
                 self.user_comm_overlap_cfg.tp_comm_overlap = False
+            elif self.user_comm_overlap_cfg.tp_comm_overlap_cfg is None:
+                comm_overlap_cfg.tp_comm_overlap_cfg = _get_safe_long_context_tp_overlap_cfg(model_cfg)
 
         # PP overlap
         if model_cfg.pipeline_model_parallel_size > 1:
@@ -494,7 +545,7 @@ class CommOverlapConfig:
             assert model_cfg.recompute_num_layers is None, (
                 "recompute_num_layers must be None when enabling overlap_moe_expert_parallel_comm"
             )
-            assert not model_cfg.moe_shared_expert_overlap, (
+            assert not (model_cfg.moe_shared_expert_overlap and _has_real_shared_experts(model_cfg)), (
                 "disable moe_shared_expert_overlap when enabling overlap_moe_expert_parallel_comm"
             )
             assert model_cfg.mtp_num_layers is None or model_cfg.mtp_num_layers == 1, (
