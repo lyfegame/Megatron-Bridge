@@ -145,6 +145,19 @@ class TestMiniMaxM2Bridge:
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
 
+    def test_provider_bridge_sets_moe_ffn_hidden_size(self, mock_pretrained):
+        bridge = MiniMaxM2Bridge()
+        provider = bridge.provider_bridge(mock_pretrained)
+
+        assert provider.moe_ffn_hidden_size == mock_pretrained.config.intermediate_size
+
+    def test_provider_bridge_clears_deprecated_full_cuda_graph_scope(self, mock_pretrained):
+        bridge = MiniMaxM2Bridge()
+        provider = bridge.provider_bridge(mock_pretrained)
+
+        assert provider.cuda_graph_impl == "none"
+        assert provider.cuda_graph_scope == []
+
     def test_mapping_registry_contains_critical_weights(self, mock_pretrained):
         bridge = MiniMaxM2Bridge()
         registry = bridge.mapping_registry()

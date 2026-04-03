@@ -142,6 +142,10 @@ class MiniMaxM2Bridge(MegatronModelBridge):
         provider.add_qkv_bias = False
         provider.hidden_dropout = 0.0
         provider.autocast_dtype = torch.bfloat16
+        if hasattr(provider, "cuda_graph_scope") and getattr(provider, "cuda_graph_impl", "none") == "none":
+            provider.cuda_graph_scope = []
+        if hasattr(provider, "moe_ffn_hidden_size") and getattr(hf_config, "intermediate_size", None) is not None:
+            provider.moe_ffn_hidden_size = hf_config.intermediate_size
 
         # MiniMax-M2 uses rotary_dim instead of partial_rotary_factor
         rotary_dim = getattr(hf_config, "rotary_dim", None)
