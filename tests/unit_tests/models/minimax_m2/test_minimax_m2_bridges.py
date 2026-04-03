@@ -22,6 +22,8 @@ import pytest
 import torch
 from transformers import GenerationConfig
 
+import megatron.bridge.models.minimax_m2.minimax_m2_provider as minimax_m2_provider
+
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.minimax_m2.minimax_m2_bridge import (
@@ -275,6 +277,39 @@ class TestFullDimRMSNorm:
     def test_full_dim_rms_norm_weight_shape(self):
         norm = _FullDimRMSNorm(local_dim=32, global_dim=64, tp_group_getter=lambda: None)
         assert norm.weight.shape == (32,)
+
+    def test_full_dim_rms_norm_uses_differentiable_all_reduce(self):
+        norm = _FullDimRMSNorm(local_dim=32, global_dim=64, tp_group_getter=lambda: "tp-group")
+        x = torch.randn(2, 1, 1, 32, requires_grad=True)
+
+        with (
+            patch.object(minimax_m2_provider.dist, "get_world_size", return_value=2),
+            patch.object(
+                minimax_m2_provider,
+                "_differentiable_all_reduce",
+                side_effect=lambda tensor, op, group: tensor + 1,
+            ) as mock_reduce,
+            patch.object(
+                minimax_m2_provider.dist,
+                "all_reduce",
+                side_effect=AssertionError("raw dist.all_reduce should not be used"),
+            ),
+        ):
+            out = norm(x)
+
+        assert out.shape == x.shape
+        mock_reduce.assert_called_once()
+
+    def test_full_dim_rms_norm_requires_differentiable_all_reduce(self):
+        norm = _FullDimRMSNorm(local_dim=32, global_dim=64, tp_group_getter=lambda: "tp-group")
+        x = torch.randn(2, 1, 1, 32)
+
+        with (
+            patch.object(minimax_m2_provider.dist, "get_world_size", return_value=2),
+            patch.object(minimax_m2_provider, "_differentiable_all_reduce", None),
+        ):
+            with pytest.raises(RuntimeError, match="preserve autograd"):
+                norm(x)
 
     def test_full_dim_q_norm_creates_rms_norm_tp1(self):
         """FullDimQNorm factory creates _FullDimRMSNorm with correct dims for TP=1."""
