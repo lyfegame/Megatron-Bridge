@@ -925,6 +925,12 @@ class GPTSFTPackedDataset(GPTSFTDataset):
                     boundaries_unpadded = [int(v) for v in explicit_unpadded]
                     if not boundaries_unpadded or boundaries_unpadded[0] != 0:
                         boundaries_unpadded = [0] + boundaries_unpadded
+                    if len(boundaries_unpadded) > len(item["seq_boundaries"]):
+                        raise ValueError(
+                            "seq_boundaries_unpadded has more boundaries than seq_boundaries; packed sidecar is inconsistent"
+                        )
+                    while len(boundaries_unpadded) < len(item["seq_boundaries"]):
+                        boundaries_unpadded.append(boundaries_unpadded[-1])
                     cu_seqlens_unpadded[-1] = boundaries_unpadded
                 else:
                     for i in range(len(item["seq_boundaries"]) - 1):

@@ -1061,6 +1061,23 @@ class TestPackedDatasetExplicitUnpaddedBoundaries:
 
         assert cu_unpadded == [0, 3, 7]
 
+    def test_collate_fn_expands_explicit_unpadded_boundaries_for_padding_tail(self):
+        dataset = _create_minimal_packed_dataset()
+        dataset.max_seq_length = 12
+        batch = [
+            {
+                "input_ids": np.array([11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 0, 0], dtype=np.int64),
+                "seq_boundaries": [0, 6, 10, 12],
+                "seq_boundaries_unpadded": [0, 5, 8],
+                "loss_mask": np.ones(12, dtype=np.int64),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+        cu_unpadded = [val for val in processed["cu_seqlens_unpadded"][0].tolist() if val >= 0]
+
+        assert cu_unpadded == [0, 5, 8, 8, 8]
+
 class TestPackedChatDatasetIntegration:
     """Integration tests for packed chat datasets."""
 
