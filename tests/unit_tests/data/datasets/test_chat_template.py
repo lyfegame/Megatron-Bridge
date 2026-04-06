@@ -1042,6 +1042,25 @@ class TestEOSIndexFixInPackedDataset:
         assert cu_unpadded == [0, 1]
 
 
+
+
+class TestPackedDatasetExplicitUnpaddedBoundaries:
+    def test_collate_fn_prefers_explicit_unpadded_boundaries(self):
+        dataset = _create_minimal_packed_dataset()
+        batch = [
+            {
+                "input_ids": np.array([11, 12, 13, 0, 0, 21, 22, 23, 24, 0], dtype=np.int64),
+                "seq_boundaries": [0, 5, 10],
+                "seq_boundaries_unpadded": [0, 3, 7],
+                "loss_mask": np.ones(10, dtype=np.int64),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+        cu_unpadded = [val for val in processed["cu_seqlens_unpadded"][0].tolist() if val >= 0]
+
+        assert cu_unpadded == [0, 3, 7]
+
 class TestPackedChatDatasetIntegration:
     """Integration tests for packed chat datasets."""
 

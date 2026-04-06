@@ -789,9 +789,13 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         input_ids = self.indexed_dataset[idx]["input_ids"]
         seq_boundaries = self.indexed_dataset[idx]["seq_start_id"] + [len(input_ids)]
         loss_mask = self.indexed_dataset[idx]["loss_mask"]
+        seq_boundaries_unpadded = self.indexed_dataset[idx].get("seq_start_id_unpadded")
         if idx < 0:
             loss_mask = [0] * len(loss_mask)
-        return {"input_ids": input_ids, "seq_boundaries": seq_boundaries, "loss_mask": loss_mask}
+        item = {"input_ids": input_ids, "seq_boundaries": seq_boundaries, "loss_mask": loss_mask}
+        if seq_boundaries_unpadded is not None:
+            item["seq_boundaries_unpadded"] = seq_boundaries_unpadded
+        return item
 
     def _load_dataset(self):
         try:
@@ -916,14 +920,21 @@ class GPTSFTPackedDataset(GPTSFTDataset):
                 cu_seqlens[-1].append(max_length)
 
             if cu_seqlens_unpadded is not None:
-                for i in range(len(item["seq_boundaries"]) - 1):
-                    current_seq = item["input_ids"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
+                explicit_unpadded = item.get("seq_boundaries_unpadded")
+                if explicit_unpadded is not None:
+                    boundaries_unpadded = [int(v) for v in explicit_unpadded]
+                    if not boundaries_unpadded or boundaries_unpadded[0] != 0:
+                        boundaries_unpadded = [0] + boundaries_unpadded
+                    cu_seqlens_unpadded[-1] = boundaries_unpadded
+                else:
+                    for i in range(len(item["seq_boundaries"]) - 1):
+                        current_seq = item["input_ids"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
 
-                    # Stop unpadded lengths at the last non-eos token so padding eos are excluded.
-                    current_seq_arr = np.array(current_seq)
-                    non_eos_positions = np.where(current_seq_arr != self.tokenizer.eos_id)[0]
-                    seqlen_unpadded = non_eos_positions[-1] + 1 if non_eos_positions.size > 0 else 0
-                    cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1] + seqlen_unpadded)
+                        # Stop unpadded lengths at the last non-eos token so padding eos are excluded.
+                        current_seq_arr = np.array(current_seq)
+                        non_eos_positions = np.where(current_seq_arr != self.tokenizer.eos_id)[0]
+                        seqlen_unpadded = non_eos_positions[-1] + 1 if non_eos_positions.size > 0 else 0
+                        cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1] + seqlen_unpadded)
 
                 # if extra paddings are added in the packed sequence, they can't be counted as
                 # actual tokens for training
