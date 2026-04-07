@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+import os
 import re
 from dataclasses import dataclass
 from importlib.metadata import version
@@ -594,6 +595,24 @@ class ParallelLinearAdapter(nn.Module):
             raise NotImplementedError("out_init_method should be zero, normal, kaiming or xavier")
         return init_fn
 
+    def _debug_check_tensor(self, label: str, tensor: torch.Tensor) -> None:
+        if os.getenv("MEGATRON_BRIDGE_LORA_DEBUG_FINITE") != "1":
+            return
+        if torch.isfinite(tensor).all():
+            return
+        nan_count = int(torch.isnan(tensor).sum().item())
+        inf_count = int(torch.isinf(tensor).sum().item())
+        finite = tensor[torch.isfinite(tensor)]
+        finite_min = float(finite.min().item()) if finite.numel() else float("nan")
+        finite_max = float(finite.max().item()) if finite.numel() else float("nan")
+        rank = parallel_state.get_data_parallel_rank(with_context_parallel=True) if parallel_state.is_initialized() else -1
+        raise RuntimeError(
+            f"LoRA nonfinite tensor in {self.base_linear_name} at {label}: "
+            f"shape={tuple(tensor.shape)} dtype={tensor.dtype} nan={nan_count} inf={inf_count} "
+            f"finite_min={finite_min} finite_max={finite_max} dp_rank={rank} "
+            f"input_is_parallel={self.input_is_parallel} disable_sequence_parallel_comm={self.disable_sequence_parallel_comm}"
+        )
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the parallel linear adapter.
 
@@ -606,12 +625,15 @@ class ParallelLinearAdapter(nn.Module):
         Returns:
             Adapted output tensor with scaling applied.
         """
+        self._debug_check_tensor("input", x)
         if self.dropout_position == "pre":
             x = self.dropout(x)
+            self._debug_check_tensor("after_pre_dropout", x)
 
         pad_len = 0
         if self.is_expert:
             x, pad_len = pad_seq_to_mult(x, self.config.expert_tensor_parallel_size)
+            self._debug_check_tensor("after_expert_pad", x)
 
         if not self.disable_sequence_parallel_comm and not self.input_is_parallel and not self.is_expert:
             # for attention_qkv and linear_fc1
@@ -619,16 +641,20 @@ class ParallelLinearAdapter(nn.Module):
             # hence seq dim need to be gathered right before lora linear layers
             # this function also handles the backward pass correctly
             x = gather_from_sequence_parallel_region(x)
+            self._debug_check_tensor("after_sp_gather", x)
 
         if self.config.cpu_offloading and self.config.cpu_offloading_activations:
             x.activation_offloading = True
         x, _ = self.linear_in(x)  # (@adithyare) ColumnLinear returns output and bias, we are ignoring the bias term.
+        self._debug_check_tensor("after_linear_in", x)
 
         x = self.activation(x)
+        self._debug_check_tensor("after_activation", x)
 
         if self.config.cpu_offloading and self.config.cpu_offloading_activations:
             x.activation_offloading = True
         x, _ = self.linear_out(x)
+        self._debug_check_tensor("after_linear_out", x)
 
         if not self.disable_sequence_parallel_comm and self.input_is_parallel and not self.is_expert:
             # for attention_dense and linear_fc2
@@ -640,16 +666,20 @@ class ParallelLinearAdapter(nn.Module):
                 x = all2all_hp2sp(x)
             else:
                 x = scatter_to_sequence_parallel_region(x)
+            self._debug_check_tensor("after_sp_scatter", x)
 
         # Add dropout if available
         if self.dropout_position == "post":
             x = self.dropout(x)
+            self._debug_check_tensor("after_post_dropout", x)
 
         x = x * (self.alpha / self.dim)
+        self._debug_check_tensor("after_scale", x)
 
         if pad_len > 0:
             # Remove MoE padding.
             x = unpad_seq_to_mult(x, pad_len)
+            self._debug_check_tensor("after_unpad", x)
 
         return x
 
