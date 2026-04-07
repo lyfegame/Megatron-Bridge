@@ -135,26 +135,14 @@ def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) ->
         out_features = m.out_features * tp_size
 
         if isinstance(m, TELayerNormColumnParallelLinear):
-            # LoRA is applied after layernorm, so layernorm output must be returned
+            # LoRA is applied after layernorm, so layernorm output must be returned.
+            # Keep the conservative path here: let the adapter perform its normal
+            # sequence-parallel gather instead of relying on TE's gathered
+            # layernorm-output fast path, which has produced nonfinite activations
+            # for MiniMax long-context CP runs.
             m.return_layernorm_output = True
-            # perf optimization for LoRA + SP
-            if hasattr(m, "ub_overlap_ag"):
-                ub_overlap_ag = m.ub_overlap_ag
-            elif hasattr(m, "ub_overlap_ag_fprop"):
-                ub_overlap_ag = m.ub_overlap_ag_fprop
-            else:
-                ub_overlap_ag = False
-            if hasattr(m, "config") and m.config.sequence_parallel and not ub_overlap_ag:
-                m.return_layernorm_output_gathered = True
-                te_version = packaging.version.Version(version("transformer-engine"))
-                if te_version >= packaging.version.Version("1.5.0dev") and (
-                    not getattr(m.config, "tp_comm_overlap", False)
-                    or getattr(m.config, "tp_comm_overlap_disable_qkv", False)
-                ):
-                    # TE 1.5 introduces the option `return_layernorm_output_gathered`, so the all gather
-                    # in the forward method is not needed, so disable sp communications
-                    # unless TP communication overlap is used
-                    disable_sequence_parallel_comm = True
+            if hasattr(m, "return_layernorm_output_gathered"):
+                m.return_layernorm_output_gathered = False
     elif HAVE_TE and any(isinstance(m, te_row_parallel) for te_row_parallel in TERL):
         input_is_parallel = True
         in_features = m.in_features * tp_size
