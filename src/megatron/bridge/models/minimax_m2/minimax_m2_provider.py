@@ -26,9 +26,25 @@ from typing import Dict, Optional, Tuple
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+
+try:
+    from torch.distributed.nn.functional import all_reduce as _differentiable_all_reduce
+except ImportError:  # pragma: no cover - older torch builds
+    _differentiable_all_reduce = None
 from megatron.core.transformer import ModuleSpec, TransformerConfig
 from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
 
+
+
+
+def _all_reduce_sum_with_autograd(tensor: torch.Tensor, group) -> torch.Tensor:
+    """All-reduce helper that preserves autograd through TP collectives."""
+    if _differentiable_all_reduce is None:
+        raise RuntimeError(
+            "MiniMax full-dim Q/K norm requires torch.distributed.nn.functional.all_reduce "
+            "to preserve autograd through tensor-parallel all-reduce."
+        )
+    return _differentiable_all_reduce(tensor, op=dist.ReduceOp.SUM, group=group)
 
 class _FullDimRMSNorm(nn.Module):
     """RMSNorm applied across all attention heads (full Q/K dimension).
@@ -64,7 +80,7 @@ class _FullDimRMSNorm(nn.Module):
         # all-reduce across TP ranks so every rank sees the global sum-of-squares
         tp_group = self._tp_group_getter()
         if tp_group is not None and dist.get_world_size(tp_group) > 1:
-            dist.all_reduce(local_ss, op=dist.ReduceOp.SUM, group=tp_group)
+            local_ss = _all_reduce_sum_with_autograd(local_ss, tp_group)
 
         variance = local_ss / self.global_dim
         x = x_fp32 * torch.rsqrt(variance + self.eps)
