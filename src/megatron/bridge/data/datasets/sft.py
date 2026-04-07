@@ -826,19 +826,17 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
     def _build_loss_mask(self, processed_example):
         seq_boundaries = processed_example["seq_boundaries"]
-        if self.answer_only_loss:
+        explicit_loss_mask = processed_example.get("loss_mask")
+        if explicit_loss_mask is not None:
             return np.concatenate(
                 [
-                    processed_example["loss_mask"][seq_boundaries[i] : seq_boundaries[i + 1] - 1]
+                    np.asarray(explicit_loss_mask[seq_boundaries[i] : seq_boundaries[i + 1] - 1], dtype=np.float32)
                     for i in range(len(seq_boundaries) - 1)
                 ]
             )
         return np.concatenate(
             [
-                [
-                    0 if x == self.tokenizer.eos_id else 1.0
-                    for x in processed_example["input_ids"][seq_boundaries[i] : seq_boundaries[i + 1] - 1]
-                ]
+                np.ones(seq_boundaries[i + 1] - seq_boundaries[i] - 1, dtype=np.float32)
                 for i in range(len(seq_boundaries) - 1)
             ]
         )
@@ -964,9 +962,7 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
 
         tokens = torch.LongTensor(input_ids)
-        loss_mask = torch.LongTensor(loss_mask)
-        # drop any padding/eos tokens from contributing to the loss
-        loss_mask[tokens == self.tokenizer.eos_id] = 0
+        loss_mask = torch.tensor(loss_mask, dtype=torch.float32)
 
         processed_batch = {
             "tokens": tokens,
