@@ -274,6 +274,40 @@ class TestDataGPTSFTPackedDataset:
         ]
         dataset.collate_fn(batch)
 
+    def test_collate_fn_preserves_supervised_eos_tokens(self, tmp_path):
+        dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
+
+        batch = [
+            {
+                "input_ids": [101, 2, 103],
+                "context_ids": [101],
+                "answer_start_idx": 1,
+                "context_length": 1,
+                "answer_ids": [2, 103],
+                "metadata": {"id": "ex1"},
+                "seq_boundaries": (0, 3),
+                "loss_mask": [0, 1, 1],
+                "token_count": 3,
+            },
+            {
+                "input_ids": [201, 202],
+                "context_ids": [201],
+                "answer_start_idx": 1,
+                "context_length": 1,
+                "answer_ids": [202],
+                "metadata": {"id": "ex2"},
+                "seq_boundaries": (0, 2),
+                "loss_mask": [0, 1],
+                "token_count": 2,
+            },
+        ]
+
+        collated = dataset.collate_fn(batch)
+        assert collated["loss_mask"][0, 1].item() == 1
+        assert collated["tokens"][0, 1].item() == dataset.tokenizer.eos_id
+        assert collated["tokens"][1, 2].item() == dataset.tokenizer.eos_id
+        assert collated["loss_mask"][1, 2].item() == 0
+
     def test_utils_func_packed(self, tmp_path):
         dataset, _ = get_gpt_sft(tmp_path, dataset_type="packed")
 
