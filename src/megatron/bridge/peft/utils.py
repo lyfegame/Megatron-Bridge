@@ -621,15 +621,12 @@ class ParallelLinearAdapter(nn.Module):
             x, pad_len = pad_seq_to_mult(x, self.config.expert_tensor_parallel_size)
             self._debug_check_tensor("after_expert_pad", x)
 
-        gathered_for_sequence_parallel = False
         if not self.disable_sequence_parallel_comm and not self.input_is_parallel and not self.is_expert:
             # for attention_qkv and linear_fc1
             # layernorm before lora is impacted by sequence parallel,
-            # hence seq dim needs to be gathered before the adapter and then
-            # scattered back after the adapter so the delta matches the base
-            # layer output layout exactly.
+            # hence seq dim need to be gathered right before lora linear layers
+            # this function also handles the backward pass correctly
             x = gather_from_sequence_parallel_region(x)
-            gathered_for_sequence_parallel = True
             self._debug_check_tensor("after_sp_gather", x)
 
         if self.config.cpu_offloading and self.config.cpu_offloading_activations:
@@ -644,10 +641,6 @@ class ParallelLinearAdapter(nn.Module):
             x.activation_offloading = True
         x, _ = self.linear_out(x)
         self._debug_check_tensor("after_linear_out", x)
-
-        if gathered_for_sequence_parallel:
-            x = scatter_to_sequence_parallel_region(x)
-            self._debug_check_tensor("after_sp_scatter", x)
 
         if not self.disable_sequence_parallel_comm and self.input_is_parallel and not self.is_expert:
             # for attention_dense and linear_fc2
