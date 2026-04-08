@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from megatron.bridge.peft.utils import ParallelLinearAdapter
 
@@ -110,6 +111,30 @@ class AdapterWrapper(nn.Module):
         """Disable the adapter layers, making the forward pass return only the base module output."""
         self._adapter_enabled = False
 
+    def _compute_adapter_input(self, x: torch.Tensor) -> torch.Tensor:
+        """Return the adapter input that should match the base linear's pre-projection input."""
+        module = self.to_wrap
+        if hasattr(module, "normalization") and hasattr(module, "layer_norm_weight"):
+            norm_type = getattr(module, "normalization", None)
+            eps = float(getattr(module, "eps", 1e-5))
+            weight = getattr(module, "layer_norm_weight")
+            bias = getattr(module, "layer_norm_bias", None)
+            zero_centered_gamma = bool(getattr(module, "zero_centered_gamma", False))
+            if norm_type == "LayerNorm":
+                return F.layer_norm(x, (x.shape[-1],), weight=weight, bias=bias, eps=eps)
+            if norm_type == "RMSNorm":
+                x_fp32 = x.float()
+                rms = torch.rsqrt(x_fp32.pow(2).mean(dim=-1, keepdim=True) + eps)
+                out = x_fp32 * rms
+                scale = weight.float()
+                if zero_centered_gamma:
+                    scale = scale + 1.0
+                out = out * scale
+                if bias is not None:
+                    out = out + bias.float()
+                return out.to(dtype=x.dtype)
+        return x
+
     def base_linear_forward(
         self, x: torch.Tensor, *args: Any, **kwargs: Any
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
@@ -145,7 +170,7 @@ class AdapterWrapper(nn.Module):
         )
 
         bias = None
-        layernorm_output = x
+        layernorm_output = self._compute_adapter_input(x)
 
         if len(linear_output) == 2:
             linear_output, bias = linear_output

@@ -135,12 +135,10 @@ def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) ->
         out_features = m.out_features * tp_size
 
         if isinstance(m, TELayerNormColumnParallelLinear):
-            # LoRA is applied after layernorm, so layernorm output must be returned.
-            # Keep the conservative path here: let the adapter perform its normal
-            # sequence-parallel gather instead of relying on TE's gathered
-            # layernorm-output fast path, which has produced nonfinite activations
-            # for MiniMax long-context CP runs.
-            m.return_layernorm_output = True
+            # Keep the wrapped TE module behavior unchanged and reconstruct the
+            # adapter's post-norm input separately inside the wrapper.
+            if hasattr(m, "return_layernorm_output"):
+                m.return_layernorm_output = False
             if hasattr(m, "return_layernorm_output_gathered"):
                 m.return_layernorm_output_gathered = False
     elif HAVE_TE and any(isinstance(m, te_row_parallel) for te_row_parallel in TERL):
