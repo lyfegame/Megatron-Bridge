@@ -58,7 +58,11 @@ class LoRALinear(AdapterWrapper):
         if not self._adapter_enabled:
             return linear_output, bias
         adapter_output = self.adapter(layernorm_output.contiguous())
-        adapter_output = adapter_output.reshape(linear_output.shape)
+        if adapter_output.shape != linear_output.shape:
+            raise RuntimeError(
+                f"LoRA adapter output shape mismatch for {self.to_wrap.__class__.__name__}: "
+                f"adapter_output={tuple(adapter_output.shape)} linear_output={tuple(linear_output.shape)}"
+            )
         return linear_output + adapter_output, bias
 
 
