@@ -480,3 +480,151 @@ class Qwen3NextModelProvider80B_A3B(Qwen3NextModelProvider):
     moe_ffn_hidden_size: int = 512
     moe_shared_expert_intermediate_size: int = 512
     mtp_num_layers: Optional[int] = None
+
+
+# =============================================================================
+# Qwen 3.5 Model Provider (dense text backbone with hybrid attention)
+# =============================================================================
+
+
+@dataclass
+class Qwen35ModelProvider(GPTModelProvider):
+    """Base provider for Qwen 3.5 text backbone (dense, hybrid attention).
+
+    Qwen3.5 uses GatedDeltaNet linear attention + Gated full attention in a
+    3:1 ratio (``full_attention_interval=4``).  Dense MLP, no MoE.
+    head_dim=256, partial RoPE (25%), vocab=248320.
+    """
+
+    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = (
+        get_transformer_block_with_experimental_attention_variant_spec
+    )
+
+    normalization: str = "RMSNorm"
+    activation_func: Callable = F.silu
+    gated_linear_unit: bool = True
+    add_bias_linear: bool = False
+    add_qkv_bias: bool = False
+    qk_layernorm: bool = True
+    kv_channels: int | None = 256  # head_dim=256
+    seq_length: int = 262144  # 256K context
+    rotary_base: float = 10_000_000.0
+    rotary_percent: float = 0.25  # partial RoPE (25%)
+    attention_output_gate: bool = True
+
+    init_method_std: int = 0.02
+    hidden_dropout: float = 0.0
+    attention_dropout: float = 0.0
+    vocab_size: int = 248320
+    layernorm_epsilon: float = 1e-6
+    position_embedding_type: str = "rope"
+    autocast_dtype: torch.dtype = torch.bfloat16
+    params_dtype: torch.dtype = torch.bfloat16
+    bf16: bool = True
+
+    # Linear attention (GatedDeltaNet)
+    experimental_attention_variant: str = "gated_delta_net"
+    linear_attention_freq: int | list[int] = 4  # 1 full attention per 4 layers
+    linear_conv_kernel_dim: int = 4
+    linear_key_head_dim: int = 128
+    linear_value_head_dim: int = 128
+    linear_num_key_heads: int = 16
+    linear_num_value_heads: int = 16  # overridden per size
+
+    # Checkpointing
+    hetereogenous_dist_checkpoint: bool = True
+
+
+@dataclass
+class Qwen35ModelProvider800M(Qwen35ModelProvider):
+    """
+    Provider for Qwen 3.5 0.8B: https://huggingface.co/Qwen/Qwen3.5-0.8B
+
+    24 layers, hidden=1024, 8 attn heads / 2 KV heads.
+    """
+
+    num_layers: int = 24
+    hidden_size: int = 1024
+    num_attention_heads: int = 8
+    num_query_groups: int = 2
+    ffn_hidden_size: int = 3584
+    share_embeddings_and_output_weights: bool = True
+    linear_num_key_heads: int = 16
+    linear_num_value_heads: int = 16
+    mtp_num_layers: Optional[int] = 1
+
+
+@dataclass
+class Qwen35ModelProvider2B(Qwen35ModelProvider):
+    """
+    Provider for Qwen 3.5 2B: https://huggingface.co/Qwen/Qwen3.5-2B
+
+    24 layers, hidden=2048, 8 attn heads / 2 KV heads.
+    """
+
+    num_layers: int = 24
+    hidden_size: int = 2048
+    num_attention_heads: int = 8
+    num_query_groups: int = 2
+    ffn_hidden_size: int = 6144
+    share_embeddings_and_output_weights: bool = True
+    linear_num_key_heads: int = 16
+    linear_num_value_heads: int = 16
+    mtp_num_layers: Optional[int] = 1
+
+
+@dataclass
+class Qwen35ModelProvider4B(Qwen35ModelProvider):
+    """
+    Provider for Qwen 3.5 4B: https://huggingface.co/Qwen/Qwen3.5-4B
+
+    32 layers, hidden=2560, 16 attn heads / 4 KV heads.
+    """
+
+    num_layers: int = 32
+    hidden_size: int = 2560
+    num_attention_heads: int = 16
+    num_query_groups: int = 4
+    ffn_hidden_size: int = 9216
+    share_embeddings_and_output_weights: bool = True
+    linear_num_key_heads: int = 16
+    linear_num_value_heads: int = 32
+    mtp_num_layers: Optional[int] = 1
+
+
+@dataclass
+class Qwen35ModelProvider9B(Qwen35ModelProvider):
+    """
+    Provider for Qwen 3.5 9B: https://huggingface.co/Qwen/Qwen3.5-9B
+
+    32 layers, hidden=4096, 16 attn heads / 4 KV heads.
+    """
+
+    num_layers: int = 32
+    hidden_size: int = 4096
+    num_attention_heads: int = 16
+    num_query_groups: int = 4
+    ffn_hidden_size: int = 12288
+    share_embeddings_and_output_weights: bool = False
+    linear_num_key_heads: int = 16
+    linear_num_value_heads: int = 32
+    mtp_num_layers: Optional[int] = 1
+
+
+@dataclass
+class Qwen35ModelProvider27B(Qwen35ModelProvider):
+    """
+    Provider for Qwen 3.5 27B: https://huggingface.co/Qwen/Qwen3.5-27B
+
+    64 layers, hidden=5120, 24 attn heads / 4 KV heads.
+    """
+
+    num_layers: int = 64
+    hidden_size: int = 5120
+    num_attention_heads: int = 24
+    num_query_groups: int = 4
+    ffn_hidden_size: int = 17408
+    share_embeddings_and_output_weights: bool = False
+    linear_num_key_heads: int = 16
+    linear_num_value_heads: int = 48
+    mtp_num_layers: Optional[int] = 1
