@@ -692,6 +692,8 @@ class ParallelLinearAdapter(nn.Module):
         sharded_state_dict = {}
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
         linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
+        linear_in_sd = {k: v for k, v in linear_in_sd.items() if not k.endswith("._extra_state")}
+        linear_out_sd = {k: v for k, v in linear_out_sd.items() if not k.endswith("._extra_state")}
 
         # The experts.py code in Megatron-LM set replica_id = (PP, ETP, EDP),
         # but it will cause errors as mentioned in https://github.com/volcengine/verl/issues/4303,

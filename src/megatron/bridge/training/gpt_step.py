@@ -16,8 +16,12 @@ import logging
 from functools import partial
 from typing import Iterable
 
-import modelopt.torch.distill as mtd
 import torch
+
+try:
+    import modelopt.torch.distill as mtd
+except ImportError:
+    mtd = None
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
@@ -30,7 +34,6 @@ from megatron.core.utils import (
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
-from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
@@ -365,7 +368,9 @@ def _create_loss_function_modelopt(
         check_for_spiky_loss=check_for_spiky_loss,
     )
     unwrapped_model = unwrap_model(model)
-    if isinstance(unwrapped_model, mtd.DistillationModel):
+    if mtd is not None and isinstance(unwrapped_model, mtd.DistillationModel):
+        from megatron.bridge.training.post_training.distillation import loss_func_kd
+
         return partial(loss_func_kd, loss_mask=loss_mask, original_loss_fn=mnt_loss_func, model=unwrapped_model)
     else:
         return mnt_loss_func
